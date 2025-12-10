@@ -1,0 +1,7 @@
+{
+  "name": "Voxel Ocean Diver",
+  "description": "An interactive 3D underwater exploration game with voxel graphics and AI-powered environment control.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
