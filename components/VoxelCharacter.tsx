@@ -1,16 +1,9 @@
 import React, { useRef, useEffect, useState, forwardRef, useMemo } from 'react';
-import { useFrame } from '@react-three/fiber';
+import { useFrame, useThree } from '@react-three/fiber';
 import { Group, TextureLoader, Texture, SRGBColorSpace, NearestFilter, Vector3, Matrix4, InstancedMesh, Object3D } from 'three';
 import * as THREE from 'three';
 import { GameState, TerrainData } from '../types';
-
-declare global {
-  namespace JSX {
-    interface IntrinsicElements {
-      [elemName: string]: any;
-    }
-  }
-}
+import { generateBubbleBuffer, generateSwimBuffer } from '../utils/audioGen';
 
 interface VoxelCharacterProps {
   isPhotoPose?: boolean;
@@ -18,14 +11,14 @@ interface VoxelCharacterProps {
   isSwimming?: boolean;
   gameState?: GameState;
   terrainData?: TerrainData;
+  audioListener?: THREE.AudioListener;
 }
 
 // Dynamic Bubble Particle System
-const Bubbles = ({ isSwimming }: { isSwimming: boolean }) => {
+const Bubbles = ({ isSwimming, parentAudioRef }: { isSwimming: boolean, parentAudioRef: React.MutableRefObject<THREE.PositionalAudio | null> }) => {
     const meshRef = useRef<InstancedMesh>(null);
     const count = 40; 
     const dummy = useMemo(() => new Object3D(), []);
-    
     const bubbles = useMemo(() => {
         return new Array(count).fill(0).map(() => ({
             pos: new Vector3(0, 0, 0),
@@ -35,6 +28,9 @@ const Bubbles = ({ isSwimming }: { isSwimming: boolean }) => {
             active: false
         }));
     }, []);
+
+    // Buffer for bubble sound
+    const bubbleBuffer = useMemo(() => generateBubbleBuffer(), []);
 
     useFrame((state) => {
         if (!meshRef.current) return;
@@ -50,6 +46,14 @@ const Bubbles = ({ isSwimming }: { isSwimming: boolean }) => {
                     bubble.pos.set(0, 0.4, -0.4); 
                     bubble.scale = Math.random() * 0.3 + 0.2;
                     
+                    // Trigger sound effect for new bubble occasionally
+                    if (Math.random() > 0.7 && parentAudioRef.current && !parentAudioRef.current.isPlaying && parentAudioRef.current.context.state === 'running') {
+                        parentAudioRef.current.setBuffer(bubbleBuffer);
+                        parentAudioRef.current.setVolume(0.2);
+                        parentAudioRef.current.setRefDistance(2);
+                        parentAudioRef.current.play();
+                    }
+
                     if (isSwimming) {
                         // Trail behind when swimming
                         bubble.velocity.set(
@@ -183,15 +187,18 @@ const MagicAura = ({ parentRef, terrainData }: { parentRef: React.RefObject<Grou
     );
 };
 
-export const VoxelCharacter = forwardRef<Group, VoxelCharacterProps>(({ isPhotoPose = false, faceTextureUrl, isSwimming = false, gameState, terrainData }, ref) => {
+export const VoxelCharacter = forwardRef<Group, VoxelCharacterProps>(({ isPhotoPose = false, faceTextureUrl, isSwimming = false, gameState, terrainData, audioListener }, ref) => {
   const localRef = useRef<Group>(null);
   const group = (ref as React.MutableRefObject<Group>) || localRef;
   const innerRef = useRef<Group>(null);
   
   const [faceTexture, setFaceTexture] = useState<Texture | null>(null);
+  const bubbleAudioRef = useRef<THREE.PositionalAudio>(null);
+  const swimAudioRef = useRef<THREE.PositionalAudio>(null);
   
   const spinStartTime = useRef<number | null>(null);
   const isSpinningRef = useRef(false);
+  const swimBuffer = useMemo(() => generateSwimBuffer(), []);
 
   useEffect(() => {
     if (faceTextureUrl) {
@@ -213,6 +220,24 @@ export const VoxelCharacter = forwardRef<Group, VoxelCharacterProps>(({ isPhotoP
         spinStartTime.current = null;
     }
   }, [gameState, faceTextureUrl]);
+
+  // Swim Sound Logic
+  useEffect(() => {
+      if (!swimAudioRef.current) return;
+      if (isSwimming) {
+          if (!swimAudioRef.current.isPlaying) {
+              swimAudioRef.current.setBuffer(swimBuffer);
+              swimAudioRef.current.setLoop(true);
+              swimAudioRef.current.setVolume(0.5);
+              swimAudioRef.current.setRefDistance(1);
+              swimAudioRef.current.play();
+          }
+      } else {
+          if (swimAudioRef.current.isPlaying) {
+              swimAudioRef.current.stop();
+          }
+      }
+  }, [isSwimming, swimBuffer]);
 
   useFrame((state) => {
     if (innerRef.current) {
@@ -266,11 +291,19 @@ export const VoxelCharacter = forwardRef<Group, VoxelCharacterProps>(({ isPhotoP
 
   return (
     <group ref={group} position={[0, 0, 0]}>
+      {/* Sound Sources - Conditionally render only if listener exists */}
+      {audioListener && (
+        <>
+            <positionalAudio ref={bubbleAudioRef} args={[audioListener]} />
+            <positionalAudio ref={swimAudioRef} args={[audioListener]} />
+        </>
+      )}
+
       {/* Reactive Aura Component */}
       <MagicAura parentRef={group as React.RefObject<Group>} terrainData={terrainData} />
 
       <group ref={innerRef} scale={[0.7, 0.7, 0.7]}>
-          
+          {/* ... Model Geometry ... */}
           {/* --- HEAD GROUP --- */}
           <group position={[0, 0.5, 0]}>
               {/* Oversized Glass Helmet */}
@@ -392,7 +425,7 @@ export const VoxelCharacter = forwardRef<Group, VoxelCharacterProps>(({ isPhotoP
               </group>
           </group>
 
-          <Bubbles isSwimming={isSwimming} />
+          <Bubbles isSwimming={isSwimming} parentAudioRef={bubbleAudioRef} />
       </group>
     </group>
   );

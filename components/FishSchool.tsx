@@ -2,48 +2,70 @@ import React, { useRef, useMemo, useEffect } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { FishSpecies } from '../types';
-
-declare global {
-  namespace JSX {
-    interface IntrinsicElements {
-      [elemName: string]: any;
-    }
-  }
-}
+import { generateFishAmbianceBuffer } from '../utils/audioGen';
 
 interface FishSchoolProps {
   species: FishSpecies;
   position: [number, number, number];
   onScan: (species: FishSpecies | null) => void;
+  audioListener?: THREE.AudioListener;
 }
 
-export const FishSchool: React.FC<FishSchoolProps> = ({ species, position, onScan }) => {
+declare global {
+  namespace JSX {
+    interface IntrinsicElements {
+      positionalAudio: any;
+      instancedMesh: any;
+      primitive: any;
+      [elemName: string]: any;
+    }
+  }
+}
+
+export const FishSchool: React.FC<FishSchoolProps> = ({ species, position, onScan, audioListener }) => {
   const meshRef = useRef<THREE.InstancedMesh>(null);
+  const audioRef = useRef<THREE.PositionalAudio>(null);
   const { camera } = useThree();
   const schoolCenter = useMemo(() => new THREE.Vector3(...position), [position]);
   const isScannedRef = useRef(false);
+  const buffer = useMemo(() => generateFishAmbianceBuffer(), []);
 
-  // Generate individual fish data
-  const particles = useMemo(() => {
+  // Initialize particles with Boid properties
+  const boids = useMemo(() => {
     const temp = [];
-    const spread = species.behavior === 'solitary' ? 2 : (species.behavior === 'school' ? 5 : 15);
-    
     for (let i = 0; i < species.count; i++) {
-      const t = Math.random() * 100;
-      const factor = 5 + Math.random() * 10;
-      const speed = species.speed * (0.8 + Math.random() * 0.4);
-      
-      // Random offset from school center
-      const xFactor = (Math.random() - 0.5) * spread;
-      const yFactor = (Math.random() - 0.5) * spread * 0.5;
-      const zFactor = (Math.random() - 0.5) * spread;
-      
-      temp.push({ t, factor, speed, xFactor, yFactor, zFactor });
+        // Random position within a sphere of radius 5 around center
+        const x = (Math.random() - 0.5) * 10;
+        const y = (Math.random() - 0.5) * 5;
+        const z = (Math.random() - 0.5) * 10;
+        
+        // Random velocity vector
+        const vx = (Math.random() - 0.5) * species.speed;
+        const vy = (Math.random() - 0.5) * species.speed * 0.1; // Less vertical movement
+        const vz = (Math.random() - 0.5) * species.speed;
+
+        temp.push({
+            position: new THREE.Vector3(x, y, z),
+            velocity: new THREE.Vector3(vx, vy, vz).normalize().multiplyScalar(species.speed),
+            acceleration: new THREE.Vector3(),
+            phaseOffset: Math.random() * 100 // For Ghost Fish opacity
+        });
     }
     return temp;
   }, [species]);
 
   const dummy = useMemo(() => new THREE.Object3D(), []);
+
+  // Init Sound
+  useEffect(() => {
+    if (audioRef.current && !audioRef.current.isPlaying) {
+        audioRef.current.setBuffer(buffer);
+        audioRef.current.setLoop(true);
+        audioRef.current.setRefDistance(5);
+        audioRef.current.setVolume(0.3);
+        audioRef.current.play();
+    }
+  }, [buffer]);
 
   useFrame((state) => {
     if (!meshRef.current) return;
@@ -59,71 +81,95 @@ export const FishSchool: React.FC<FishSchoolProps> = ({ species, position, onSca
         onScan(null);
     }
 
-    const tGlobal = state.clock.elapsedTime;
-
-    particles.forEach((particle, i) => {
-      let { t, factor, speed, xFactor, yFactor, zFactor } = particle;
-      t = particle.t += speed;
-
-      // Behavior Logic
-      let x = 0, y = 0, z = 0;
-      
-      if (species.behavior === 'solitary') {
-          // Solitary (Shark): Wide slow circles
-          x = schoolCenter.x + Math.cos(t * 0.2) * 8;
-          y = schoolCenter.y + Math.sin(t * 0.1) * 2;
-          z = schoolCenter.z + Math.sin(t * 0.2) * 8;
-      } else if (species.behavior === 'school') {
-          // School (Sardine/Clownfish): Tight synchronized movement with noise
-          const a = Math.cos(t) + Math.sin(t * 1) / 10;
-          const b = Math.sin(t) + Math.cos(t * 2) / 10;
-          x = schoolCenter.x + xFactor + Math.cos((t / 10) * factor) + (Math.sin(t * 1) * factor) / 10;
-          y = schoolCenter.y + yFactor + Math.sin((t / 10) * factor);
-          z = schoolCenter.z + zFactor + Math.cos((t / 10) * factor);
-      } else {
-          // Wander (Goldfish/Tang): Random drifting
-          x = schoolCenter.x + xFactor + Math.sin(t * 0.5 + i) * 3;
-          y = schoolCenter.y + yFactor + Math.cos(t * 0.3 + i) * 2;
-          z = schoolCenter.z + zFactor + Math.sin(t * 0.4 + i) * 3;
-      }
-
-      dummy.position.set(x, y, z);
-
-      // Orientation (Look forward)
-      // Calculate next position for lookAt
-      const lookT = t + 0.1;
-      let lx = x, ly = y, lz = z;
-       if (species.behavior === 'solitary') {
-          lx = schoolCenter.x + Math.cos(lookT * 0.2) * 8;
-          ly = schoolCenter.y + Math.sin(lookT * 0.1) * 2;
-          lz = schoolCenter.z + Math.sin(lookT * 0.2) * 8;
-      } else if (species.behavior === 'school') {
-          lx = schoolCenter.x + xFactor + Math.cos((lookT / 10) * factor) + (Math.sin(lookT * 1) * factor) / 10;
-          ly = schoolCenter.y + yFactor + Math.sin((lookT / 10) * factor);
-          lz = schoolCenter.z + zFactor + Math.cos((lookT / 10) * factor);
-      } else {
-          lx = schoolCenter.x + xFactor + Math.sin(lookT * 0.5 + i) * 3;
-          ly = schoolCenter.y + yFactor + Math.cos(lookT * 0.3 + i) * 2;
-          lz = schoolCenter.z + zFactor + Math.sin(lookT * 0.4 + i) * 3;
-      }
-      
-      dummy.lookAt(lx, ly, lz);
-      dummy.scale.setScalar(1);
-      dummy.updateMatrix();
-      meshRef.current.setMatrixAt(i, dummy.matrix);
-    });
+    const t = state.clock.elapsedTime;
     
-    meshRef.current.instanceMatrix.needsUpdate = true;
-  });
+    // Ghost Fish Phasing Logic
+    if (species.id === 'ghost') {
+        const mat = meshRef.current.material as THREE.MeshStandardMaterial;
+        mat.transparent = true;
+        // Pulse opacity globally based on time, but can be customized per instance if we used instanceColor
+        // For simple batching, we'll pulse the whole school or assume standard material
+        // To make it look cooler, we will just use time based sine wave for the global material opacity
+        mat.opacity = 0.1 + (Math.sin(t * 2) * 0.5 + 0.5) * 0.5;
+        mat.needsUpdate = true;
+    }
 
-  return (
-    <instancedMesh ref={meshRef} args={[undefined, undefined, species.count]}>
-      <boxGeometry args={species.scale} />
-      <meshStandardMaterial 
-        color={species.color} 
-        roughness={0.4}
-        metalness={0.1}
-      />
-    </instancedMesh>
-  );
-};
+    // --- BOIDS FLOCKING ALGORITHM ---
+    // Parameters tailored for different behaviors
+    const perceptionRadius = 3.0;
+    const maxSpeed = species.speed;
+    const maxForce = species.speed * 0.05;
+    
+    // Weights
+    let alignmentWeight = 1.0;
+    let cohesionWeight = 1.0;
+    let separationWeight = 1.5;
+    let centeringWeight = 0.05; // Pull back to school center
+
+    if (species.behavior === 'solitary') {
+        alignmentWeight = 0.1;
+        cohesionWeight = 0;
+        separationWeight = 2.0;
+        centeringWeight = 0.02; // Wander more
+    } else if (species.behavior === 'wander') {
+        cohesionWeight = 0.5;
+        alignmentWeight = 0.5;
+    }
+
+    // Simulation Step
+    for (let i = 0; i < species.count; i++) {
+        const current = boids[i];
+        const alignment = new THREE.Vector3();
+        const cohesion = new THREE.Vector3();
+        const separation = new THREE.Vector3();
+        let total = 0;
+
+        // Check neighbors
+        for (let j = 0; j < species.count; j++) {
+            if (i !== j) {
+                const other = boids[j];
+                const d = current.position.distanceTo(other.position);
+                
+                if (d < perceptionRadius) {
+                    alignment.add(other.velocity);
+                    cohesion.add(other.position);
+                    
+                    const diff = new THREE.Vector3().subVectors(current.position, other.position);
+                    diff.divideScalar(d); // Weight by distance
+                    separation.add(diff);
+                    
+                    total++;
+                }
+            }
+        }
+
+        if (total > 0) {
+            alignment.divideScalar(total).normalize().multiplyScalar(maxSpeed).sub(current.velocity).clampLength(0, maxForce);
+            cohesion.divideScalar(total).sub(current.position).normalize().multiplyScalar(maxSpeed).sub(current.velocity).clampLength(0, maxForce);
+            separation.divideScalar(total).normalize().multiplyScalar(maxSpeed).sub(current.velocity).clampLength(0, maxForce);
+        }
+
+        // Apply Forces
+        current.acceleration.add(alignment.multiplyScalar(alignmentWeight));
+        current.acceleration.add(cohesion.multiplyScalar(cohesionWeight));
+        current.acceleration.add(separation.multiplyScalar(separationWeight));
+        
+        // Centering Force (Keep them near the spawn point/school center)
+        const centerDir = new THREE.Vector3().subVectors(new THREE.Vector3(0,0,0), current.position); // relative to local group 0,0,0
+        const distToCenter = centerDir.length();
+        if (distToCenter > 8) {
+             centerDir.normalize().multiplyScalar(maxSpeed).sub(current.velocity).clampLength(0, maxForce * 2);
+             current.acceleration.add(centerDir.multiplyScalar(centeringWeight * (distToCenter/5)));
+        }
+
+        // Update Physics
+        current.position.add(current.velocity);
+        current.velocity.add(current.acceleration);
+        current.velocity.clampLength(maxSpeed * 0.5, maxSpeed); // Min/Max speed
+        current.acceleration.set(0, 0, 0); // Reset accel
+
+        // Update Matrix
+        dummy.position.copy(current.position);
+        
+        // Orient to velocity
+        const lookTarget = current.position.clone

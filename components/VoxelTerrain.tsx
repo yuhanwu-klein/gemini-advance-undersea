@@ -2,14 +2,6 @@ import React, { useRef, useLayoutEffect } from 'react';
 import * as THREE from 'three';
 import { TerrainData } from '../types';
 
-declare global {
-  namespace JSX {
-    interface IntrinsicElements {
-      [elemName: string]: any;
-    }
-  }
-}
-
 // Must match the generator
 const BLOCK_SIZE = 0.2;
 

@@ -71,3 +71,14 @@ export interface TerrainData {
     columnInstances: any[];   // New ruins decor
     mapPOIs: MapPOI[];
 }
+
+declare global {
+  namespace JSX {
+    interface IntrinsicElements {
+      positionalAudio: any;
+      instancedMesh: any;
+      primitive: any;
+      [elemName: string]: any;
+    }
+  }
+}

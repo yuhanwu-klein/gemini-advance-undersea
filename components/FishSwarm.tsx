@@ -2,14 +2,6 @@ import React, { useRef, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 
-declare global {
-  namespace JSX {
-    interface IntrinsicElements {
-      [elemName: string]: any;
-    }
-  }
-}
-
 export const FishSwarm: React.FC<{ count: number }> = ({ count }) => {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const colors = useMemo(() => new Float32Array(count * 3), [count]);

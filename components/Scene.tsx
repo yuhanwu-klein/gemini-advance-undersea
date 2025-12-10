@@ -6,14 +6,7 @@ import { VoxelCharacter } from './VoxelCharacter';
 import { FishSchool } from './FishSchool';
 import { GameSettings, TimeOfDay, GameState, TerrainData, MoveInput, FishSpecies } from '../types';
 import * as THREE from 'three';
-
-declare global {
-  namespace JSX {
-    interface IntrinsicElements {
-      [elemName: string]: any;
-    }
-  }
-}
+import { generateOceanBuffer, generateSonarBuffer, resumeAudioContext } from '../utils/audioGen';
 
 interface SceneProps {
   settings: GameSettings;
@@ -41,7 +34,7 @@ const SPECIES_DATA: FishSpecies[] = [
         color: '#ff7f50',
         scale: [0.25, 0.2, 0.4],
         count: 12,
-        speed: 0.015,
+        speed: 0.08,
         behavior: 'school',
         shape: 'classic'
     },
@@ -54,7 +47,7 @@ const SPECIES_DATA: FishSpecies[] = [
         color: '#94a3b8',
         scale: [0.1, 0.1, 0.35],
         count: 40,
-        speed: 0.04,
+        speed: 0.12,
         behavior: 'school',
         shape: 'long'
     },
@@ -67,7 +60,7 @@ const SPECIES_DATA: FishSpecies[] = [
         color: '#475569',
         scale: [0.6, 0.5, 1.2],
         count: 2,
-        speed: 0.008,
+        speed: 0.05,
         behavior: 'solitary',
         shape: 'shark'
     },
@@ -80,7 +73,7 @@ const SPECIES_DATA: FishSpecies[] = [
         color: '#facc15',
         scale: [0.15, 0.35, 0.3],
         count: 8,
-        speed: 0.01,
+        speed: 0.06,
         behavior: 'wander',
         shape: 'flat'
     },
@@ -93,9 +86,22 @@ const SPECIES_DATA: FishSpecies[] = [
         color: '#fb923c',
         scale: [0.3, 0.3, 0.3],
         count: 5,
-        speed: 0.012,
+        speed: 0.04,
         behavior: 'wander',
         shape: 'classic'
+    },
+    {
+        id: 'ghost',
+        name: 'Phantom Tetra',
+        scientificName: 'Phasma aquatica',
+        description: 'A mysterious species that phases in and out of visual spectrum. Believed to be made of pure light.',
+        rarity: 'LEGENDARY',
+        color: '#a5f3fc',
+        scale: [0.2, 0.2, 0.4],
+        count: 6,
+        speed: 0.03,
+        behavior: 'wander', // We'll handle phasing in the component
+        shape: 'long'
     }
 ];
 
@@ -150,8 +156,7 @@ const MarineSnow: React.FC = () => {
     useFrame((state) => {
         if (!meshRef.current) return;
         const t = state.clock.elapsedTime;
-        const camPos = state.camera.position;
-
+        
         particles.forEach((p, i) => {
             let y = p.pos.y - t * p.speed;
             if (y < -15) y += 30;
@@ -175,6 +180,62 @@ const MarineSnow: React.FC = () => {
             <planeGeometry args={[0.2, 0.2]} />
             <meshBasicMaterial color="white" transparent opacity={0.4} side={THREE.DoubleSide} />
         </instancedMesh>
+    );
+};
+
+const AudioManager: React.FC<{ gameState: GameState, listener: THREE.AudioListener }> = ({ gameState, listener }) => {
+    const [ambientSound] = useState(() => new THREE.Audio(listener));
+    const sonarRef = useRef<THREE.PositionalAudio>(null);
+    const sonarDummyRef = useRef<THREE.Group>(null);
+    
+    // Global Ambient Sound
+    useEffect(() => {
+        if (gameState === GameState.INTRO) {
+             resumeAudioContext(); 
+        }
+
+        if (!ambientSound.isPlaying) {
+            const buffer = generateOceanBuffer();
+            ambientSound.setBuffer(buffer);
+            ambientSound.setLoop(true);
+            ambientSound.setVolume(0.4);
+            ambientSound.play();
+        }
+    }, [gameState, ambientSound]);
+
+    // Occasional Sonar Ping (Spatialized from random distant locations)
+    useFrame((state) => {
+        if (gameState !== GameState.PLAYING) return;
+        
+        // Random chance approx every 10-15 seconds
+        if (Math.random() < 0.001) {
+             if (sonarRef.current && !sonarRef.current.isPlaying && sonarDummyRef.current) {
+                 const buffer = generateSonarBuffer();
+                 sonarRef.current.setBuffer(buffer);
+                 sonarRef.current.setRefDistance(10);
+                 sonarRef.current.setVolume(0.5);
+                 
+                 // Move dummy sound source to random distant location
+                 const angle = Math.random() * Math.PI * 2;
+                 const dist = 30 + Math.random() * 20;
+                 sonarDummyRef.current.position.set(
+                     Math.cos(angle) * dist, 
+                     Math.random() * 10 - 5, 
+                     Math.sin(angle) * dist
+                 );
+                 
+                 sonarRef.current.play();
+             }
+        }
+    });
+
+    return (
+        <>
+            <primitive object={ambientSound} />
+            <group ref={sonarDummyRef}>
+                 <positionalAudio ref={sonarRef} args={[listener]} />
+            </group>
+        </>
     );
 };
 
@@ -327,110 +388,120 @@ const ScreenshotWrapper: React.FC<{ captureRef: React.MutableRefObject<() => str
   return null;
 };
 
-export const GameScene: React.FC<SceneProps> = ({ 
-    settings, 
-    gameState, 
-    captureRef, 
-    faceTextureUrl, 
-    terrainData, 
-    cameraRotationRef, 
-    isSwimming,
-    isRecharging,
-    moveInput,
-    onOxygenUpdate,
-    isGameOver,
-    onRespawn,
-    onScanSpecies
-}) => {
-  const waterColor = settings.timeOfDay === TimeOfDay.DAY ? "#c4b5fd" : "#1e1b4b"; 
-  const characterRef = useRef<THREE.Group>(null);
-  const controlsRef = useRef<any>(null);
+// Wrapper to handle internal scene state including AudioListener
+const SceneContent: React.FC<SceneProps> = (props) => {
+    const { camera } = useThree();
+    const [listener] = useState(() => new THREE.AudioListener());
+    const characterRef = useRef<THREE.Group>(null);
+    const controlsRef = useRef<any>(null);
 
-  // Memoize scan handler to avoid re-renders in children
-  const handleScan = React.useCallback((s: FishSpecies | null) => {
-    onScanSpecies(s);
-  }, [onScanSpecies]);
+    const waterColor = props.settings.timeOfDay === TimeOfDay.DAY ? "#c4b5fd" : "#1e1b4b"; 
 
+    useEffect(() => {
+        camera.add(listener);
+        return () => { camera.remove(listener); };
+    }, [camera, listener]);
+
+    // Memoize scan handler to avoid re-renders in children
+    const handleScan = React.useCallback((s: FishSpecies | null) => {
+        props.onScanSpecies(s);
+    }, [props.onScanSpecies]);
+
+    declare global {
+        namespace JSX {
+            interface IntrinsicElements {
+                positionalAudio: any;
+                instancedMesh: any;
+                primitive: any;
+                [elemName: string]: any;
+            }
+        }
+    }
+
+    return (
+        <>
+            <ScreenshotWrapper captureRef={props.captureRef} />
+            <AudioManager gameState={props.gameState} listener={listener} />
+            
+            <color attach="background" args={[waterColor]} />
+            <UnderwaterEffect fogDensity={props.settings.fogDensity} color={waterColor} />
+            <Lighting time={props.settings.timeOfDay} />
+
+            <group position={[0, -2, 0]}>
+                <VoxelTerrain terrainData={props.terrainData} />
+            </group>
+
+            <Float 
+                speed={props.gameState === GameState.PHOTO_MODE ? 0.5 : (props.isSwimming ? 5 : 2)} 
+                rotationIntensity={props.gameState === GameState.PHOTO_MODE ? 0.05 : (props.isSwimming ? 0.5 : 0.2)} 
+                floatIntensity={0.5}
+            >
+                <VoxelCharacter 
+                    ref={characterRef}
+                    isPhotoPose={props.gameState === GameState.PHOTO_MODE} 
+                    faceTextureUrl={props.faceTextureUrl}
+                    isSwimming={props.isSwimming}
+                    gameState={props.gameState}
+                    terrainData={props.terrainData}
+                    audioListener={listener}
+                />
+            </Float>
+
+            {/* FISH SCHOOLS - With Audio Listener */}
+            <FishSchool species={SPECIES_DATA[0]} position={[0, -1, 0]} onScan={handleScan} audioListener={listener} />
+            <FishSchool species={SPECIES_DATA[1]} position={[10, 4, -10]} onScan={handleScan} audioListener={listener} />
+            <FishSchool species={SPECIES_DATA[2]} position={[-15, -1, -20]} onScan={handleScan} audioListener={listener} />
+            <FishSchool species={SPECIES_DATA[3]} position={[-8, 0, 8]} onScan={handleScan} audioListener={listener} />
+            <FishSchool species={SPECIES_DATA[4]} position={[15, -1, 15]} onScan={handleScan} audioListener={listener} />
+            
+            {/* GHOST FISH - RARE & PHASING */}
+            <FishSchool species={SPECIES_DATA[5]} position={[-20, 5, 20]} onScan={handleScan} audioListener={listener} />
+
+            <MarineSnow />
+            
+            <Sparkles count={300} scale={[40, 40, 40]} size={3} speed={0.5} opacity={0.6} color="#e879f9" />
+            <Sparkles count={200} scale={[30, 30, 30]} size={2} speed={0.3} opacity={0.4} color="#22d3ee" />
+
+            <PlayerController 
+                gameState={props.gameState} 
+                rotationRef={props.cameraRotationRef} 
+                isSwimming={props.isSwimming}
+                moveInput={props.moveInput}
+                controlsRef={controlsRef}
+                characterRef={characterRef}
+                isGameOver={props.isGameOver}
+                onRespawn={props.onRespawn}
+            />
+
+            <SurvivalSystem 
+                gameState={props.gameState} 
+                onOxygenUpdate={props.onOxygenUpdate} 
+                isGameOver={props.isGameOver}
+                isRecharging={props.isRecharging}
+            />
+            
+            {props.gameState === GameState.PLAYING && (
+                <OrbitControls 
+                ref={controlsRef}
+                enablePan={false} 
+                minDistance={3} 
+                maxDistance={40}
+                maxPolarAngle={Math.PI / 1.6} 
+                target={[0, 0, 0]}
+                />
+            )}
+        </>
+    );
+}
+
+export const GameScene: React.FC<SceneProps> = (props) => {
   return (
     <Canvas 
         shadows 
         camera={{ position: [5, 2, 8], fov: 60 }}
         gl={{ preserveDrawingBuffer: true, antialias: false }}
     >
-      <ScreenshotWrapper captureRef={captureRef} />
-      
-      <color attach="background" args={[waterColor]} />
-      <UnderwaterEffect fogDensity={settings.fogDensity} color={waterColor} />
-      <Lighting time={settings.timeOfDay} />
-
-      <group position={[0, -2, 0]}>
-        <VoxelTerrain terrainData={terrainData} />
-      </group>
-
-      <Float 
-        speed={gameState === GameState.PHOTO_MODE ? 0.5 : (isSwimming ? 5 : 2)} 
-        rotationIntensity={gameState === GameState.PHOTO_MODE ? 0.05 : (isSwimming ? 0.5 : 0.2)} 
-        floatIntensity={0.5}
-      >
-        <VoxelCharacter 
-            ref={characterRef}
-            isPhotoPose={gameState === GameState.PHOTO_MODE} 
-            faceTextureUrl={faceTextureUrl}
-            isSwimming={isSwimming}
-            gameState={gameState}
-            terrainData={terrainData} 
-        />
-      </Float>
-
-      {/* FISH SCHOOLS */}
-      {/* Clownfish near the center ruins */}
-      <FishSchool species={SPECIES_DATA[0]} position={[0, -1, 0]} onScan={handleScan} />
-      
-      {/* Sardines slightly higher and offset */}
-      <FishSchool species={SPECIES_DATA[1]} position={[10, 4, -10]} onScan={handleScan} />
-      
-      {/* Tiger Shark deeper and further out */}
-      <FishSchool species={SPECIES_DATA[2]} position={[-15, -1, -20]} onScan={handleScan} />
-      
-      {/* Yellow Tang near another patch */}
-      <FishSchool species={SPECIES_DATA[3]} position={[-8, 0, 8]} onScan={handleScan} />
-
-      {/* Goldfish - Legendary, slightly hidden */}
-      <FishSchool species={SPECIES_DATA[4]} position={[15, -1, 15]} onScan={handleScan} />
-
-      <MarineSnow />
-      
-      <Sparkles count={300} scale={[40, 40, 40]} size={3} speed={0.5} opacity={0.6} color="#e879f9" />
-      <Sparkles count={200} scale={[30, 30, 30]} size={2} speed={0.3} opacity={0.4} color="#22d3ee" />
-
-      <PlayerController 
-        gameState={gameState} 
-        rotationRef={cameraRotationRef} 
-        isSwimming={isSwimming}
-        moveInput={moveInput}
-        controlsRef={controlsRef}
-        characterRef={characterRef}
-        isGameOver={isGameOver}
-        onRespawn={onRespawn}
-      />
-
-      <SurvivalSystem 
-        gameState={gameState} 
-        onOxygenUpdate={onOxygenUpdate} 
-        isGameOver={isGameOver}
-        isRecharging={isRecharging}
-      />
-      
-      {gameState === GameState.PLAYING && (
-        <OrbitControls 
-          ref={controlsRef}
-          enablePan={false} 
-          minDistance={3} 
-          maxDistance={40}
-          maxPolarAngle={Math.PI / 1.6} 
-          target={[0, 0, 0]}
-        />
-      )}
+        <SceneContent {...props} />
     </Canvas>
   );
 };
