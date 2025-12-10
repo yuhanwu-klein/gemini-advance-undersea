@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useState, forwardRef, useMemo } from 'react';
-import { useFrame, useThree } from '@react-three/fiber';
-import { Group, TextureLoader, Texture, SRGBColorSpace, NearestFilter, Vector3, Matrix4, InstancedMesh, Object3D } from 'three';
+import { useFrame } from '@react-three/fiber';
+import { Group, TextureLoader, Texture, SRGBColorSpace, NearestFilter, Vector3, InstancedMesh, Object3D } from 'three';
 import * as THREE from 'three';
 import { GameState, TerrainData } from '../types';
 import { generateBubbleBuffer, generateSwimBuffer } from '../utils/audioGen';
@@ -13,6 +13,88 @@ interface VoxelCharacterProps {
   terrainData?: TerrainData;
   audioListener?: THREE.AudioListener;
 }
+
+// Face Apply Particle Effect (Magic Poof)
+const FaceApplyParticles = ({ trigger }: { trigger: boolean }) => {
+    const meshRef = useRef<InstancedMesh>(null);
+    const count = 30;
+    const dummy = useMemo(() => new Object3D(), []);
+    
+    // Store particle state: velocity and life
+    const particles = useMemo(() => {
+        return new Array(count).fill(0).map(() => ({
+            velocity: new Vector3(
+                (Math.random() - 0.5) * 0.1,
+                (Math.random() - 0.5) * 0.1,
+                (Math.random() - 0.5) * 0.1 + 0.05 // Forward bias
+            ),
+            life: 0,
+            color: Math.random() > 0.5 ? '#f472b6' : '#22d3ee' // Pink or Cyan
+        }));
+    }, []);
+    
+    const [active, setActive] = useState(false);
+    const [startTime, setStartTime] = useState(0);
+
+    useEffect(() => {
+        if (trigger) {
+            setActive(true);
+            setStartTime(Date.now());
+            // Reset particles
+            particles.forEach(p => {
+                p.velocity.set(
+                    (Math.random() - 0.5) * 0.2,
+                    (Math.random() - 0.5) * 0.2,
+                    (Math.random() - 0.5) * 0.2
+                );
+            });
+        }
+    }, [trigger, particles]);
+
+    useFrame((state) => {
+        if (!active || !meshRef.current) return;
+        
+        const now = Date.now();
+        const elapsed = (now - startTime) / 1000;
+        
+        if (elapsed > 1.0) {
+            setActive(false);
+            meshRef.current.visible = false;
+            return;
+        }
+        meshRef.current.visible = true;
+
+        particles.forEach((p, i) => {
+            // Move from head center
+            const x = p.velocity.x * elapsed * 10;
+            const y = p.velocity.y * elapsed * 10 + 0.5; // Offset to head height
+            const z = p.velocity.z * elapsed * 10;
+            
+            dummy.position.set(x, y, z);
+            
+            // Scale down over life
+            const scale = (1 - elapsed) * 0.15;
+            dummy.scale.setScalar(scale);
+            dummy.rotation.set(elapsed * 5, elapsed * 5, 0);
+            
+            dummy.updateMatrix();
+            meshRef.current!.setMatrixAt(i, dummy.matrix);
+            
+            const c = new THREE.Color(p.color);
+            meshRef.current!.setColorAt(i, c);
+        });
+        
+        meshRef.current.instanceMatrix.needsUpdate = true;
+        if (meshRef.current.instanceColor) meshRef.current.instanceColor.needsUpdate = true;
+    });
+
+    return (
+        <instancedMesh ref={meshRef} args={[undefined, undefined, count]} visible={false}>
+            <boxGeometry args={[1, 1, 1]} />
+            <meshBasicMaterial toneMapped={false} />
+        </instancedMesh>
+    );
+};
 
 // Dynamic Bubble Particle System
 const Bubbles = ({ isSwimming, parentAudioRef }: { isSwimming: boolean, parentAudioRef: React.MutableRefObject<THREE.PositionalAudio | null> }) => {
@@ -193,6 +275,8 @@ export const VoxelCharacter = forwardRef<Group, VoxelCharacterProps>(({ isPhotoP
   const innerRef = useRef<Group>(null);
   
   const [faceTexture, setFaceTexture] = useState<Texture | null>(null);
+  const [triggerFaceParticles, setTriggerFaceParticles] = useState(false);
+  
   const bubbleAudioRef = useRef<THREE.PositionalAudio>(null);
   const swimAudioRef = useRef<THREE.PositionalAudio>(null);
   
@@ -208,6 +292,9 @@ export const VoxelCharacter = forwardRef<Group, VoxelCharacterProps>(({ isPhotoP
             tex.minFilter = NearestFilter;
             tex.magFilter = NearestFilter;
             setFaceTexture(tex);
+            // Trigger magic poof!
+            setTriggerFaceParticles(true);
+            setTimeout(() => setTriggerFaceParticles(false), 100);
         });
     } else {
         setFaceTexture(null);
@@ -303,6 +390,9 @@ export const VoxelCharacter = forwardRef<Group, VoxelCharacterProps>(({ isPhotoP
       <MagicAura parentRef={group as React.RefObject<Group>} terrainData={terrainData} />
 
       <group ref={innerRef} scale={[0.7, 0.7, 0.7]}>
+          {/* Particles for Face App */}
+          <FaceApplyParticles trigger={triggerFaceParticles} />
+
           {/* ... Model Geometry ... */}
           {/* --- HEAD GROUP --- */}
           <group position={[0, 0.5, 0]}>
