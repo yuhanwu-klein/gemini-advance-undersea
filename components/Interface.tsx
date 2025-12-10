@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Eye, Sun, Moon, Play, Camera, Check, RefreshCw, X, Map as MapIcon, Compass, Waves, Droplets, AlertTriangle, Skull, BatteryCharging, Scan, Dna } from 'lucide-react';
+import { Eye, Sun, Moon, Play, Camera, Check, RefreshCw, X, Map as MapIcon, Compass, Waves, Droplets, AlertTriangle, Skull, BatteryCharging, Scan, Dna, ArrowRight } from 'lucide-react';
 import { GameSettings, TimeOfDay, GameState, DiveLicense, MapPOI, FishSpecies } from '../types';
 
 interface MiniMapProps {
@@ -200,6 +200,53 @@ const BioScanner: React.FC<{ species: FishSpecies | null }> = ({ species }) => {
         return () => clearInterval(timer);
     }, [species]);
 
+    // Speech Narrator Effect
+    useEffect(() => {
+        if (!species) return;
+
+        const speak = () => {
+            if (!window.speechSynthesis) return;
+            
+            // Cancel any current speech
+            window.speechSynthesis.cancel();
+            
+            // Construct narration text
+            const text = `Species identified. ${species.name}. ${species.description}`;
+            
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.pitch = 1.15; // Higher pitch for younger/AI assistant tone
+            utterance.rate = 1.0;
+            utterance.volume = 0.9;
+            
+            const voices = window.speechSynthesis.getVoices();
+            const femaleVoice = voices.find(v => 
+                v.name.includes('Google US English') || 
+                v.name.includes('Samantha') || 
+                v.name.includes('Zira') ||
+                v.name.toLowerCase().includes('female')
+            );
+            
+            if (femaleVoice) {
+                utterance.voice = femaleVoice;
+            }
+            
+            window.speechSynthesis.speak(utterance);
+        };
+
+        if (window.speechSynthesis.getVoices().length !== 0) {
+            speak();
+        } else {
+            const handler = () => speak();
+            window.speechSynthesis.addEventListener('voiceschanged', handler, { once: true });
+            return () => window.speechSynthesis.removeEventListener('voiceschanged', handler);
+        }
+
+        // Cleanup: Stop speaking if scanning stops/switches
+        return () => {
+            window.speechSynthesis.cancel();
+        };
+    }, [species]);
+
     if (!species) return null;
 
     const rarityColor = {
@@ -249,6 +296,126 @@ const BioScanner: React.FC<{ species: FishSpecies | null }> = ({ species }) => {
     );
 };
 
+const TutorialOverlay: React.FC<{ onComplete: () => void }> = ({ onComplete }) => {
+    const steps = [
+        { id: 'WELCOME', text: "Welcome to Voxel Ocean. I am your AI Guide.", highlight: null },
+        { id: 'MOVEMENT', text: "Use W, A, S, D keys to swim. Or look around with your mouse.", highlight: 'CENTER' },
+        { id: 'OXYGEN', text: "Monitor your oxygen meter here. Return to the surface or use gestures to refill.", highlight: 'OXYGEN' },
+        { id: 'MAP', text: "Use the sonar map to navigate ruins and find rare creatures.", highlight: 'MAP' },
+        { id: 'SCANNER', text: "Swim close to fish to activate the bio-scanner and log species.", highlight: 'SCANNER' },
+    ];
+
+    const [currentStep, setCurrentStep] = useState(0);
+    const step = steps[currentStep];
+
+    useEffect(() => {
+        const speak = () => {
+            if (!window.speechSynthesis) return;
+            window.speechSynthesis.cancel();
+            
+            const utterance = new SpeechSynthesisUtterance(step.text);
+            utterance.pitch = 1.15;
+            utterance.rate = 1.0;
+            
+            const voices = window.speechSynthesis.getVoices();
+            const femaleVoice = voices.find(v => 
+                v.name.includes('Google US English') || 
+                v.name.includes('Samantha') || 
+                v.name.includes('Zira') ||
+                v.name.toLowerCase().includes('female')
+            );
+            if (femaleVoice) utterance.voice = femaleVoice;
+            
+            utterance.onend = () => {
+                setTimeout(() => {
+                    if (currentStep < steps.length - 1) {
+                        setCurrentStep(c => c + 1);
+                    } else {
+                        onComplete();
+                    }
+                }, 1000); // Wait 1s before next step
+            };
+
+            window.speechSynthesis.speak(utterance);
+        };
+
+        if (window.speechSynthesis.getVoices().length !== 0) {
+            speak();
+        } else {
+            const handler = () => speak();
+            window.speechSynthesis.addEventListener('voiceschanged', handler, { once: true });
+            return () => window.speechSynthesis.removeEventListener('voiceschanged', handler);
+        }
+
+        return () => window.speechSynthesis.cancel();
+    }, [currentStep, onComplete]);
+
+    const getHighlightStyle = (target: string | null) => {
+        const base = "absolute border-4 border-cyan-400 shadow-[0_0_50px_rgba(34,211,238,0.8)] rounded-xl transition-all duration-700 ease-in-out z-50 pointer-events-none";
+        
+        // Match positions from Interface HUD layout
+        switch(target) {
+            case 'OXYGEN':
+                // bottom-40 left-4, roughly w-24 h-48
+                return { className: base, style: { bottom: '160px', left: '16px', width: '100px', height: '200px' } };
+            case 'MAP':
+                // bottom-4 right-4, w-48 h-48
+                return { className: base, style: { bottom: '16px', right: '16px', width: '200px', height: '200px', borderRadius: '50%' } };
+            case 'SCANNER':
+                // top-24 right-4, w-72 h-64 (approx)
+                return { className: base, style: { top: '96px', right: '16px', width: '300px', height: '250px' } };
+            case 'CENTER':
+                return { className: base, style: { top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: '300px', height: '300px', borderRadius: '50%' } };
+            default:
+                return { className: base, style: { opacity: 0 } }; // Hidden
+        }
+    };
+
+    const highlight = getHighlightStyle(step.highlight);
+
+    return (
+        <div className="absolute inset-0 z-[60] pointer-events-none">
+            {/* Darken Background */}
+            <div className="absolute inset-0 bg-black/50 transition-colors duration-1000" />
+            
+            {/* Spotlight Box */}
+            <div className={highlight.className} style={highlight.style}>
+                 <div className="absolute -top-4 left-1/2 -translate-x-1/2 bg-cyan-500 text-black text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">
+                     Focus
+                 </div>
+            </div>
+
+            {/* Subtitle / Narration Box */}
+            <div className="absolute bottom-24 left-1/2 -translate-x-1/2 w-full max-w-2xl text-center">
+                 <div className="bg-black/80 backdrop-blur-md border border-cyan-500/50 p-6 rounded-2xl shadow-2xl transform transition-all duration-500">
+                     <div className="flex items-center justify-center gap-2 mb-2">
+                         <div className="w-2 h-2 bg-cyan-400 rounded-full animate-pulse" />
+                         <span className="text-cyan-400 font-mono text-xs tracking-[0.2em] uppercase">System Guide</span>
+                     </div>
+                     <p className="text-xl md:text-2xl font-light text-white leading-relaxed">
+                         "{step.text}"
+                     </p>
+                     
+                     <div className="mt-4 flex justify-center gap-1">
+                         {steps.map((s, i) => (
+                             <div key={s.id} className={`h-1 rounded-full transition-all duration-300 ${i === currentStep ? 'w-8 bg-cyan-400' : 'w-2 bg-gray-600'}`} />
+                         ))}
+                     </div>
+                 </div>
+                 
+                 <div className="mt-4">
+                     <button onClick={() => { 
+                         if (currentStep < steps.length - 1) setCurrentStep(c => c + 1);
+                         else onComplete();
+                     }} className="pointer-events-auto text-cyan-500/50 hover:text-cyan-400 text-xs font-mono uppercase flex items-center justify-center gap-2 transition-colors">
+                         Skip / Next <ArrowRight size={12} />
+                     </button>
+                 </div>
+            </div>
+        </div>
+    );
+};
+
 interface InterfaceProps {
   onSettingsChange: (settings: Partial<GameSettings>) => void;
   currentSettings: GameSettings;
@@ -256,6 +423,7 @@ interface InterfaceProps {
   onStart: () => void;
   onTakePhoto: (webcamImage?: string) => void;
   onAcceptLicense: () => void;
+  onTutorialComplete: () => void;
   capturedImage: string | null;
   mapPOIs: MapPOI[];
   cameraRotationRef: React.MutableRefObject<number>;
@@ -274,6 +442,7 @@ export const Interface: React.FC<InterfaceProps> = ({
     onStart,
     onTakePhoto,
     onAcceptLicense,
+    onTutorialComplete,
     capturedImage,
     mapPOIs,
     cameraRotationRef,
@@ -331,6 +500,42 @@ export const Interface: React.FC<InterfaceProps> = ({
             activeStream.getTracks().forEach(track => track.stop());
         }
     };
+  }, [gameState, capturedImage]);
+
+  // Voice Narration Effect for Intro
+  useEffect(() => {
+    if (gameState === GameState.PHOTO_MODE && !capturedImage) {
+        const speak = () => {
+            if (!window.speechSynthesis) return;
+            window.speechSynthesis.cancel();
+            
+            const utterance = new SpeechSynthesisUtterance("Get ready to take the picture for your dive license.");
+            utterance.pitch = 1.15; // Higher pitch for younger/female tone
+            utterance.rate = 1.0;
+            
+            const voices = window.speechSynthesis.getVoices();
+            // Heuristic to find a female-sounding voice
+            const femaleVoice = voices.find(v => 
+                v.name.includes('Google US English') || 
+                v.name.includes('Samantha') || 
+                v.name.includes('Zira') ||
+                v.name.toLowerCase().includes('female')
+            );
+            
+            if (femaleVoice) {
+                utterance.voice = femaleVoice;
+            }
+            
+            window.speechSynthesis.speak(utterance);
+        };
+
+        // Voices might load asynchronously
+        if (window.speechSynthesis.getVoices().length !== 0) {
+            speak();
+        } else {
+            window.speechSynthesis.addEventListener('voiceschanged', () => speak(), { once: true });
+        }
+    }
   }, [gameState, capturedImage]);
 
   useEffect(() => {
@@ -524,7 +729,9 @@ export const Interface: React.FC<InterfaceProps> = ({
 
   return (
     <div className="absolute inset-0 pointer-events-none flex flex-col justify-between">
-      <div className="w-full p-4 flex justify-between items-start pointer-events-auto">
+      {gameState === GameState.TUTORIAL && <TutorialOverlay onComplete={onTutorialComplete} />}
+
+      <div className="w-full p-4 flex justify-between items-start pointer-events-auto z-10">
          <div className="bg-black/40 backdrop-blur-md p-3 rounded-xl border border-white/10 text-white shadow-xl flex flex-col gap-2">
             <div>
                 <h2 className="text-xl font-bold text-cyan-400">Voxel Diver</h2>
@@ -554,16 +761,22 @@ export const Interface: React.FC<InterfaceProps> = ({
          </div>
       </div>
 
-      <div className="absolute bottom-40 left-4 pointer-events-auto">
+      <div className="absolute bottom-40 left-4 pointer-events-auto z-10">
           <OxygenMeter level={oxygen} isRecharging={isRecharging} />
       </div>
 
-      <div className="absolute bottom-4 right-4 pointer-events-auto">
+      <div className="absolute bottom-4 right-4 pointer-events-auto z-10">
           <MiniMap pois={mapPOIs} cameraRotationRef={cameraRotationRef} />
       </div>
 
       {/* BIO SCANNER DISPLAY */}
-      {scannedSpecies && <BioScanner species={scannedSpecies} />}
+      {(scannedSpecies || (gameState === GameState.TUTORIAL)) && (
+          <div className={`${gameState === GameState.TUTORIAL ? 'opacity-50 pointer-events-none' : ''}`}>
+             {scannedSpecies ? <BioScanner species={scannedSpecies} /> : (gameState === GameState.TUTORIAL ? 
+                 <div className="absolute top-24 right-4 w-72 h-32 border-2 border-dashed border-cyan-500/30 rounded-xl flex items-center justify-center text-cyan-500/50 font-mono text-xs">SCANNER STANDBY</div> 
+             : null)}
+          </div>
+      )}
     </div>
   );
 };

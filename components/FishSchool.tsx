@@ -6,9 +6,7 @@ import { FishSpecies } from '../types';
 declare global {
   namespace JSX {
     interface IntrinsicElements {
-      instancedMesh: any;
-      boxGeometry: any;
-      meshStandardMaterial: any;
+      [elemName: string]: any;
     }
   }
 }

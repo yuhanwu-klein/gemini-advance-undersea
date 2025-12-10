@@ -5,11 +5,7 @@ import { TerrainData } from '../types';
 declare global {
   namespace JSX {
     interface IntrinsicElements {
-      group: any;
-      instancedMesh: any;
-      boxGeometry: any;
-      meshStandardMaterial: any;
-      meshBasicMaterial: any;
+      [elemName: string]: any;
     }
   }
 }

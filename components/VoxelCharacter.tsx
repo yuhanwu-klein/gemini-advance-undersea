@@ -7,13 +7,7 @@ import { GameState, TerrainData } from '../types';
 declare global {
   namespace JSX {
     interface IntrinsicElements {
-      group: any;
-      mesh: any;
-      boxGeometry: any;
-      meshStandardMaterial: any;
-      planeGeometry: any;
-      meshBasicMaterial: any;
-      instancedMesh: any;
+      [elemName: string]: any;
     }
   }
 }

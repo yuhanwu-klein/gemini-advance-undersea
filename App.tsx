@@ -103,7 +103,11 @@ const App: React.FC = () => {
       setCapturedImage(null);
   };
 
-  const handleEnterGame = () => {
+  const handleAcceptLicense = () => {
+    setGameState(GameState.TUTORIAL);
+  };
+  
+  const handleTutorialComplete = () => {
     setGameState(GameState.PLAYING);
     setOxygen(100);
     setIsGameOver(false);
@@ -153,7 +157,8 @@ const App: React.FC = () => {
           gameState={gameState}
           onStart={handleStartIntro}
           onTakePhoto={capturedImage ? handleRetake : handleTakePhoto}
-          onAcceptLicense={handleEnterGame}
+          onAcceptLicense={handleAcceptLicense}
+          onTutorialComplete={handleTutorialComplete}
           capturedImage={capturedImage}
           mapPOIs={terrainData.mapPOIs}
           cameraRotationRef={cameraRotationRef}

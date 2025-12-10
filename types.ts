@@ -1,6 +1,7 @@
 export enum GameState {
   INTRO = 'INTRO',
   PHOTO_MODE = 'PHOTO_MODE',
+  TUTORIAL = 'TUTORIAL',
   PLAYING = 'PLAYING',
 }
 
