@@ -407,17 +407,6 @@ const SceneContent: React.FC<SceneProps> = (props) => {
         props.onScanSpecies(s);
     }, [props.onScanSpecies]);
 
-    declare global {
-        namespace JSX {
-            interface IntrinsicElements {
-                positionalAudio: any;
-                instancedMesh: any;
-                primitive: any;
-                [elemName: string]: any;
-            }
-        }
-    }
-
     return (
         <>
             <ScreenshotWrapper captureRef={props.captureRef} />

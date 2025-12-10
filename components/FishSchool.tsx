@@ -11,17 +11,6 @@ interface FishSchoolProps {
   audioListener?: THREE.AudioListener;
 }
 
-declare global {
-  namespace JSX {
-    interface IntrinsicElements {
-      positionalAudio: any;
-      instancedMesh: any;
-      primitive: any;
-      [elemName: string]: any;
-    }
-  }
-}
-
 export const FishSchool: React.FC<FishSchoolProps> = ({ species, position, onScan, audioListener }) => {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const audioRef = useRef<THREE.PositionalAudio>(null);
@@ -35,9 +24,9 @@ export const FishSchool: React.FC<FishSchoolProps> = ({ species, position, onSca
     const temp = [];
     for (let i = 0; i < species.count; i++) {
         // Random position within a sphere of radius 5 around center
-        const x = (Math.random() - 0.5) * 10;
-        const y = (Math.random() - 0.5) * 5;
-        const z = (Math.random() - 0.5) * 10;
+        const x = (Math.random() - 0.5) * 8;
+        const y = (Math.random() - 0.5) * 4;
+        const z = (Math.random() - 0.5) * 8;
         
         // Random velocity vector
         const vx = (Math.random() - 0.5) * species.speed;
@@ -87,32 +76,29 @@ export const FishSchool: React.FC<FishSchoolProps> = ({ species, position, onSca
     if (species.id === 'ghost') {
         const mat = meshRef.current.material as THREE.MeshStandardMaterial;
         mat.transparent = true;
-        // Pulse opacity globally based on time, but can be customized per instance if we used instanceColor
-        // For simple batching, we'll pulse the whole school or assume standard material
-        // To make it look cooler, we will just use time based sine wave for the global material opacity
         mat.opacity = 0.1 + (Math.sin(t * 2) * 0.5 + 0.5) * 0.5;
         mat.needsUpdate = true;
     }
 
     // --- BOIDS FLOCKING ALGORITHM ---
-    // Parameters tailored for different behaviors
-    const perceptionRadius = 3.0;
+    // Tighter schooling parameters
+    const perceptionRadius = 2.5; // Slightly reduced to encourage local clustering
     const maxSpeed = species.speed;
-    const maxForce = species.speed * 0.05;
+    const maxForce = species.speed * 0.1; // Increased turning ability
     
-    // Weights
+    // Weights - Tuned for Grouping
     let alignmentWeight = 1.0;
-    let cohesionWeight = 1.0;
-    let separationWeight = 1.5;
-    let centeringWeight = 0.05; // Pull back to school center
+    let cohesionWeight = 2.0; // Stronger desire to stay together
+    let separationWeight = 1.3; // Just enough to not crash
+    let centeringWeight = 0.5; // Strong pull back to school center
 
     if (species.behavior === 'solitary') {
         alignmentWeight = 0.1;
         cohesionWeight = 0;
-        separationWeight = 2.0;
-        centeringWeight = 0.02; // Wander more
+        separationWeight = 3.0;
+        centeringWeight = 0.1; 
     } else if (species.behavior === 'wander') {
-        cohesionWeight = 0.5;
+        cohesionWeight = 0.8;
         alignmentWeight = 0.5;
     }
 
@@ -157,7 +143,8 @@ export const FishSchool: React.FC<FishSchoolProps> = ({ species, position, onSca
         // Centering Force (Keep them near the spawn point/school center)
         const centerDir = new THREE.Vector3().subVectors(new THREE.Vector3(0,0,0), current.position); // relative to local group 0,0,0
         const distToCenter = centerDir.length();
-        if (distToCenter > 8) {
+        // Exponential centering force if they go too far
+        if (distToCenter > 5) {
              centerDir.normalize().multiplyScalar(maxSpeed).sub(current.velocity).clampLength(0, maxForce * 2);
              current.acceleration.add(centerDir.multiplyScalar(centeringWeight * (distToCenter/5)));
         }
@@ -171,5 +158,31 @@ export const FishSchool: React.FC<FishSchoolProps> = ({ species, position, onSca
         // Update Matrix
         dummy.position.copy(current.position);
         
-        // Orient to velocity
-        const lookTarget = current.position.clone
+        // Orient to velocity with smoothing
+        const lookTarget = current.position.clone().add(current.velocity);
+        dummy.lookAt(lookTarget);
+        
+        dummy.scale.setScalar(1);
+        dummy.updateMatrix();
+        meshRef.current.setMatrixAt(i, dummy.matrix);
+    }
+    
+    meshRef.current.instanceMatrix.needsUpdate = true;
+  });
+
+  return (
+    <group position={position}>
+       {audioListener && <positionalAudio ref={audioRef} args={[audioListener]} />}
+       <instancedMesh ref={meshRef} args={[undefined, undefined, species.count]}>
+        <boxGeometry args={species.scale} />
+        <meshStandardMaterial 
+            color={species.color} 
+            roughness={0.4}
+            metalness={0.1}
+            transparent={species.id === 'ghost'}
+            opacity={species.id === 'ghost' ? 0.6 : 1.0}
+        />
+        </instancedMesh>
+    </group>
+  );
+};

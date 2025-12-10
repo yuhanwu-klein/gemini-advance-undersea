@@ -75,9 +75,6 @@ export interface TerrainData {
 declare global {
   namespace JSX {
     interface IntrinsicElements {
-      positionalAudio: any;
-      instancedMesh: any;
-      primitive: any;
       [elemName: string]: any;
     }
   }
