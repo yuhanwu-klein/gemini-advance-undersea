@@ -4,6 +4,7 @@ import { Interface } from './components/Interface';
 import { GestureController } from './components/GestureController';
 import { GameSettings, TimeOfDay, GameState, MoveInput, FishSpecies } from './types';
 import { generateTerrain } from './utils/worldGen';
+import { useAudio } from './hooks/useAudio';
 
 const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState>(GameState.INTRO);
@@ -33,6 +34,9 @@ const App: React.FC = () => {
   const cameraRotationRef = useRef<number>(0);
 
   const terrainData = useMemo(() => generateTerrain(600, 600), []);
+
+  // Audio system
+  const { initAudio } = useAudio(gameState, isSwimming, isGameOver);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -86,6 +90,7 @@ const App: React.FC = () => {
   };
 
   const handleStartIntro = () => {
+    initAudio(); // Initialize audio on user interaction
     setGameState(GameState.PHOTO_MODE);
   };
 
