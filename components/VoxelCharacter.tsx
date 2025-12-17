@@ -3,7 +3,7 @@ import { useFrame } from '@react-three/fiber';
 import { Group, TextureLoader, Texture, SRGBColorSpace, NearestFilter, Vector3, InstancedMesh, Object3D } from 'three';
 import * as THREE from 'three';
 import { GameState, TerrainData } from '../types';
-import { generateBubbleBuffer, generateSwimBuffer } from '../utils/audioGen';
+import { generateBubbleBuffer } from '../utils/audioGen';
 
 interface VoxelCharacterProps {
   isPhotoPose?: boolean;
@@ -278,27 +278,34 @@ export const VoxelCharacter = forwardRef<Group, VoxelCharacterProps>(({ isPhotoP
   const [triggerFaceParticles, setTriggerFaceParticles] = useState(false);
   
   const bubbleAudioRef = useRef<THREE.PositionalAudio>(null);
-  const swimAudioRef = useRef<THREE.PositionalAudio>(null);
   
   const spinStartTime = useRef<number | null>(null);
   const isSpinningRef = useRef(false);
-  const swimBuffer = useMemo(() => generateSwimBuffer(), []);
 
   useEffect(() => {
+    let currentTex: Texture | null = null;
     if (faceTextureUrl) {
         const loader = new TextureLoader();
         loader.load(faceTextureUrl, (tex) => {
             tex.colorSpace = SRGBColorSpace;
             tex.minFilter = NearestFilter;
             tex.magFilter = NearestFilter;
+            currentTex = tex;
             setFaceTexture(tex);
             // Trigger magic poof!
             setTriggerFaceParticles(true);
             setTimeout(() => setTriggerFaceParticles(false), 100);
+            
+            // Trigger "Show Off" Animation immediately when photo is applied
+            isSpinningRef.current = true;
+            spinStartTime.current = null;
         });
     } else {
         setFaceTexture(null);
     }
+    return () => {
+        if (currentTex) currentTex.dispose();
+    };
   }, [faceTextureUrl]);
 
   useEffect(() => {
@@ -308,53 +315,54 @@ export const VoxelCharacter = forwardRef<Group, VoxelCharacterProps>(({ isPhotoP
     }
   }, [gameState, faceTextureUrl]);
 
-  // Swim Sound Logic
-  useEffect(() => {
-      if (!swimAudioRef.current) return;
-      if (isSwimming) {
-          if (!swimAudioRef.current.isPlaying) {
-              swimAudioRef.current.setBuffer(swimBuffer);
-              swimAudioRef.current.setLoop(true);
-              swimAudioRef.current.setVolume(0.5);
-              swimAudioRef.current.setRefDistance(1);
-              swimAudioRef.current.play();
-          }
-      } else {
-          if (swimAudioRef.current.isPlaying) {
-              swimAudioRef.current.stop();
-          }
-      }
-  }, [isSwimming, swimBuffer]);
-
-  useFrame((state) => {
+  useFrame((state, delta) => {
     if (innerRef.current) {
       const t = state.clock.elapsedTime;
       
       if (isSpinningRef.current) {
           if (spinStartTime.current === null) spinStartTime.current = t;
-          const duration = 1.5;
+          const duration = 1.2; // Show-off duration
           const elapsed = t - spinStartTime.current;
           const progress = Math.min(elapsed / duration, 1);
           const ease = 1 - Math.pow(1 - progress, 3);
           
+          // Spin 360
           innerRef.current.rotation.y = ease * Math.PI * 2;
-          innerRef.current.rotation.x = 0;
+          
+          // Show-off Jump & Nod
+          const jumpPhase = Math.sin(progress * Math.PI); // 0 -> 1 -> 0
+          innerRef.current.position.y = jumpPhase * 0.3; // Jump up
+          innerRef.current.rotation.x = jumpPhase * 0.2; // Slight nod
           innerRef.current.rotation.z = 0;
           
           if (progress >= 1) {
               isSpinningRef.current = false;
               spinStartTime.current = null;
+              // Reset pose
+              innerRef.current.rotation.y = 0;
+              innerRef.current.position.y = 0;
+              innerRef.current.rotation.x = 0;
           }
       } else {
+          // Normal Idle / Swim Animation
           if (isPhotoPose) {
             innerRef.current.rotation.x = 0;
             innerRef.current.rotation.y = Math.sin(t * 0.5) * 0.05;
             innerRef.current.rotation.z = 0;
           } else {
-            const tilt = isSwimming ? 1.4 : 0.4;
-            innerRef.current.rotation.x = THREE.MathUtils.lerp(innerRef.current.rotation.x, tilt + Math.sin(t * 1) * 0.1, 0.1);
-            innerRef.current.rotation.y = 0;
-            innerRef.current.rotation.z = 0;
+            // Dynamic Tilt logic for fluent movement
+            const targetTilt = isSwimming ? 1.3 : 0.2; // 1.3 rads is about 75 degrees forward lean
+            
+            // Smoothly lerp tilt
+            innerRef.current.rotation.x = THREE.MathUtils.lerp(
+                innerRef.current.rotation.x, 
+                targetTilt + Math.sin(t * 1) * 0.05, 
+                delta * 5
+            );
+            
+            // Gentle idle sway
+            innerRef.current.rotation.y = Math.sin(t * 0.5) * 0.05;
+            innerRef.current.rotation.z = Math.cos(t * 0.3) * 0.05;
           }
       }
     }
@@ -382,7 +390,6 @@ export const VoxelCharacter = forwardRef<Group, VoxelCharacterProps>(({ isPhotoP
       {audioListener && (
         <>
             <positionalAudio ref={bubbleAudioRef} args={[audioListener]} />
-            <positionalAudio ref={swimAudioRef} args={[audioListener]} />
         </>
       )}
 

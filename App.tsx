@@ -1,8 +1,8 @@
 import React, { useState, useRef, useMemo, useCallback, useEffect } from 'react';
-import { GameScene } from './components/Scene';
+import { GameScene, SPECIES_DATA } from './components/Scene';
 import { Interface } from './components/Interface';
 import { GestureController } from './components/GestureController';
-import { GameSettings, TimeOfDay, GameState, MoveInput, FishSpecies } from './types';
+import { GameSettings, TimeOfDay, GameState, MoveInput, FishSpecies, InteractableItem } from './types';
 import { generateTerrain } from './utils/worldGen';
 
 const App: React.FC = () => {
@@ -16,6 +16,8 @@ const App: React.FC = () => {
   
   const [gestureSwimming, setGestureSwimming] = useState(false);
   const [gestureRecharging, setGestureRecharging] = useState(false);
+  const [gestureSteer, setGestureSteer] = useState<'LEFT' | 'RIGHT' | null>(null);
+
   const [moveInput, setMoveInput] = useState<MoveInput>({
     forward: false,
     backward: false,
@@ -25,14 +27,32 @@ const App: React.FC = () => {
   
   const [oxygen, setOxygen] = useState(100);
   const [isGameOver, setIsGameOver] = useState(false);
+  const [isInputLocked, setIsInputLocked] = useState(false);
   
   // SCANNER STATE
   const [scannedSpecies, setScannedSpecies] = useState<FishSpecies | null>(null);
+  const [collectedSpecies, setCollectedSpecies] = useState<Set<string>>(new Set());
+  
+  // INTERACTION STATE
+  const [interactedItems, setInteractedItems] = useState<Set<string>>(new Set());
+  const [closestInteractable, setClosestInteractable] = useState<InteractableItem | null>(null);
+
+  // Refs for event listener to avoid re-binding and dropping inputs
+  const closestInteractableRef = useRef<InteractableItem | null>(null);
+  const interactedItemsRef = useRef<Set<string>>(new Set());
+  const gameStateRef = useRef<GameState>(GameState.INTRO);
+
+  // Sync refs
+  useEffect(() => { closestInteractableRef.current = closestInteractable; }, [closestInteractable]);
+  useEffect(() => { interactedItemsRef.current = interactedItems; }, [interactedItems]);
+  useEffect(() => { gameStateRef.current = gameState; }, [gameState]);
 
   const captureRef = useRef<() => string>(() => '');
   const cameraRotationRef = useRef<number>(0);
 
-  const terrainData = useMemo(() => generateTerrain(600, 600), []);
+  // Optimized terrain: High count with smaller blocks = dense lego world
+  // 350x350 with 0.15 block size creates a ~52 unit wide world with high detail
+  const terrainData = useMemo(() => generateTerrain(350, 350), []);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -49,6 +69,11 @@ const App: React.FC = () => {
         case 'd': case 'D': case 'ArrowRight':
           setMoveInput(prev => ({ ...prev, right: true }));
           break;
+        case 'e': case 'E':
+            if (gameStateRef.current === GameState.PLAYING && closestInteractableRef.current && !interactedItemsRef.current.has(closestInteractableRef.current.id)) {
+                setInteractedItems(prev => new Set(prev).add(closestInteractableRef.current!.id));
+            }
+            break;
       }
     };
 
@@ -76,9 +101,17 @@ const App: React.FC = () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, []);
+  }, []); // Empty dependency array = stable event listeners
 
-  const isSwimming = gestureSwimming || moveInput.forward || moveInput.backward;
+  // Combine Keyboard and Gesture Input
+  const combinedMoveInput = useMemo(() => ({
+    forward: moveInput.forward,
+    backward: moveInput.backward,
+    left: moveInput.left || gestureSteer === 'LEFT',
+    right: moveInput.right || gestureSteer === 'RIGHT'
+  }), [moveInput, gestureSteer]);
+
+  const isSwimming = (gestureSwimming || moveInput.forward || moveInput.backward || moveInput.left || moveInput.right);
   const isRecharging = gestureRecharging && !isSwimming;
 
   const handleSettingsChange = (newSettings: Partial<GameSettings>) => {
@@ -128,6 +161,26 @@ const App: React.FC = () => {
   
   const handleScanSpecies = useCallback((species: FishSpecies | null) => {
       setScannedSpecies(species);
+      if (species) {
+          setCollectedSpecies(prev => {
+              if (!prev.has(species.id)) {
+                  // Only lock input if this is the first time collecting this species
+                  setIsInputLocked(true);
+                  const next = new Set(prev);
+                  next.add(species.id);
+                  return next;
+              }
+              return prev;
+          });
+      }
+  }, []);
+
+  const handleScanComplete = useCallback(() => {
+      setIsInputLocked(false);
+  }, []);
+
+  const handleHoverInteractable = useCallback((item: InteractableItem | null) => {
+      setClosestInteractable(item);
   }, []);
 
   return (
@@ -140,13 +193,16 @@ const App: React.FC = () => {
             faceTextureUrl={capturedImage}
             terrainData={terrainData}
             cameraRotationRef={cameraRotationRef}
-            isSwimming={isSwimming}
+            isSwimming={isInputLocked ? false : isSwimming}
             isRecharging={isRecharging}
-            moveInput={moveInput}
+            moveInput={combinedMoveInput}
             onOxygenUpdate={handleOxygenUpdate}
             isGameOver={isGameOver}
             onRespawn={handleRespawn}
             onScanSpecies={handleScanSpecies}
+            interactedItems={interactedItems}
+            onHoverInteractable={handleHoverInteractable}
+            isInputLocked={isInputLocked}
         />
       </div>
 
@@ -162,18 +218,25 @@ const App: React.FC = () => {
           capturedImage={capturedImage}
           mapPOIs={terrainData.mapPOIs}
           cameraRotationRef={cameraRotationRef}
-          isSwimming={isSwimming}
+          isSwimming={isInputLocked ? false : isSwimming}
           isRecharging={isRecharging}
           oxygen={oxygen}
           isGameOver={isGameOver}
           onRespawn={handleRespawn}
           scannedSpecies={scannedSpecies}
+          closestInteractable={closestInteractable && !interactedItems.has(closestInteractable.id) ? closestInteractable : null}
+          collectedCount={collectedSpecies.size}
+          totalSpeciesCount={SPECIES_DATA.length}
+          collectedSpecies={collectedSpecies}
+          interactedItems={interactedItems}
+          onScanComplete={handleScanComplete}
         />
         
-        {gameState === GameState.PLAYING && !isGameOver && (
+        {(gameState === GameState.PLAYING || gameState === GameState.TUTORIAL) && !isGameOver && (
             <GestureController 
               onSwimChange={setGestureSwimming} 
               onRechargeChange={setGestureRecharging}
+              onSteerChange={setGestureSteer}
             />
         )}
       </div>

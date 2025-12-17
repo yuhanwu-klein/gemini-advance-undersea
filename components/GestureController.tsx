@@ -1,22 +1,57 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { HandLandmarker, FilesetResolver } from "@mediapipe/tasks-vision";
-import { Hand, ThumbsDown } from 'lucide-react';
+import { Hand, ThumbsDown, ArrowLeft, ArrowRight, MousePointer2 } from 'lucide-react';
 
 interface GestureControllerProps {
     onSwimChange: (isSwimming: boolean) => void;
     onRechargeChange: (isRecharging: boolean) => void;
+    onSteerChange: (direction: 'LEFT' | 'RIGHT' | null) => void;
 }
 
-export const GestureController: React.FC<GestureControllerProps> = ({ onSwimChange, onRechargeChange }) => {
+export const GestureController: React.FC<GestureControllerProps> = ({ onSwimChange, onRechargeChange, onSteerChange }) => {
     const videoRef = useRef<HTMLVideoElement>(null);
     const [isLoaded, setIsLoaded] = useState(false);
     const [status, setStatus] = useState<string>('Initializing Motion Link...');
-    const [activeAction, setActiveAction] = useState<'SWIM' | 'RECHARGE' | null>(null);
+    const [activeAction, setActiveAction] = useState<'SWIM' | 'RECHARGE' | 'LEFT' | 'RIGHT' | null>(null);
     
     // Refs for non-react state to be used in animation loop
     const handLandmarkerRef = useRef<HandLandmarker | null>(null);
     const lastVideoTimeRef = useRef<number>(-1);
     const requestRef = useRef<number>(0);
+
+    // Speech Logic
+    const speakInstructions = useCallback(() => {
+        if (!window.speechSynthesis) return;
+        
+        // Ensure voices are loaded
+        let voices = window.speechSynthesis.getVoices();
+        const runSpeak = () => {
+            window.speechSynthesis.cancel();
+            const text = "Motion link active. Show open hand to swim. Point one finger to turn right, two fingers for left. Hold thumb down to refill oxygen.";
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.volume = 1.0;
+            utterance.rate = 1.05;
+            utterance.pitch = 1.1; // Slightly higher pitch for female tone
+
+            // Attempt to find a female voice
+            voices = window.speechSynthesis.getVoices();
+            const femaleVoice = voices.find(v => 
+                v.name.includes('Google US English') || 
+                v.name.includes('Microsoft Zira') ||
+                v.name.includes('Samantha') || 
+                v.name.toLowerCase().includes('female')
+            );
+            if (femaleVoice) utterance.voice = femaleVoice;
+
+            window.speechSynthesis.speak(utterance);
+        };
+
+        if (voices.length === 0) {
+            window.speechSynthesis.addEventListener('voiceschanged', runSpeak, { once: true });
+        } else {
+            runSpeak();
+        }
+    }, []);
 
     useEffect(() => {
         let mounted = true;
@@ -53,6 +88,9 @@ export const GestureController: React.FC<GestureControllerProps> = ({ onSwimChan
                         setIsLoaded(true);
                         setStatus('ACTIVE');
                         predictWebcam();
+                        
+                        // Trigger voice instruction
+                        setTimeout(speakInstructions, 1000);
                     });
                 }
 
@@ -75,7 +113,7 @@ export const GestureController: React.FC<GestureControllerProps> = ({ onSwimChan
             }
             cancelAnimationFrame(requestRef.current);
         };
-    }, []);
+    }, [speakInstructions]);
 
     const calculateDistance = (p1: {x:number, y:number}, p2: {x:number, y:number}) => {
         return Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
@@ -94,71 +132,84 @@ export const GestureController: React.FC<GestureControllerProps> = ({ onSwimChan
             
             let isSwimming = false;
             let isRecharging = false;
+            let steerDir: 'LEFT' | 'RIGHT' | null = null;
 
             if (results.landmarks) {
                 for (const landmarks of results.landmarks) {
                     const wrist = landmarks[0];
                     const thumbTip = landmarks[4];
+                    const thumbIp = landmarks[3];
                     const indexTip = landmarks[8];
+                    const indexPip = landmarks[6];
                     const middleTip = landmarks[12];
-                    const ringTip = landmarks[16];
-                    const pinkyTip = landmarks[20];
-
-                    const thumbIp = landmarks[3]; // Thumb knuckle
-                    const indexPip = landmarks[6]; // Index knuckle
                     const middlePip = landmarks[10];
+                    const ringTip = landmarks[16];
                     const ringPip = landmarks[14];
+                    const pinkyTip = landmarks[20];
                     const pinkyPip = landmarks[18];
 
-                    // 1. Detect Hand Open (SWIM)
-                    // Check if fingers are extended (Tip distance to wrist > Pip distance to wrist)
-                    // We use a slight multiplier to ensure intentional extension
-                    let extendedCount = 0;
+                    // Helper to check openness relative to wrist distance
+                    const dWrist = (p: any) => calculateDistance(wrist, p);
                     
-                    // Thumb
-                    if (calculateDistance(wrist, thumbTip) > calculateDistance(wrist, thumbIp) * 1.1) extendedCount++;
-                    // Fingers
-                    if (calculateDistance(wrist, indexTip) > calculateDistance(wrist, indexPip) * 1.2) extendedCount++;
-                    if (calculateDistance(wrist, middleTip) > calculateDistance(wrist, middlePip) * 1.2) extendedCount++;
-                    if (calculateDistance(wrist, ringTip) > calculateDistance(wrist, ringPip) * 1.2) extendedCount++;
-                    if (calculateDistance(wrist, pinkyTip) > calculateDistance(wrist, pinkyPip) * 1.2) extendedCount++;
+                    const isThumbOpen = dWrist(thumbTip) > dWrist(thumbIp) * 1.1;
+                    const isIndexOpen = dWrist(indexTip) > dWrist(indexPip) * 1.1;
+                    const isMiddleOpen = dWrist(middleTip) > dWrist(middlePip) * 1.1;
+                    const isRingOpen = dWrist(ringTip) > dWrist(ringPip) * 1.1;
+                    const isPinkyOpen = dWrist(pinkyTip) > dWrist(pinkyPip) * 1.1;
 
-                    if (extendedCount >= 5) {
+                    // Count fingers excluding thumb for simpler logic, or include it
+                    // Let's count all 5 for "Open Hand"
+                    const extendedCount = [isThumbOpen, isIndexOpen, isMiddleOpen, isRingOpen, isPinkyOpen].filter(Boolean).length;
+
+                    // --- ACTION DETECTION ---
+                    
+                    // 1. Swim: Open Hand (4 or more fingers extended)
+                    if (extendedCount >= 4) {
                         isSwimming = true;
-                    }
+                    } 
+                    else {
+                        // 2. Recharge: Thumb Down
+                        // Logic: Thumb tip below wrist (y is higher value), and it's the lowest point
+                        const isThumbBelowWrist = thumbTip.y > wrist.y + 0.05;
+                        if (isThumbBelowWrist && extendedCount < 3) {
+                            isRecharging = true;
+                        }
 
-                    // 2. Detect Thumb Down (RECHARGE)
-                    // Thumb tip must be significantly below wrist (Y increases downwards in vision coords)
-                    // Other fingers should generally be curled or higher than thumb
-                    const isThumbBelowWrist = thumbTip.y > wrist.y + 0.05;
-                    // Check if thumb tip is the lowest point (highest Y) among tips
-                    const isThumbLowest = thumbTip.y > indexTip.y && thumbTip.y > middleTip.y && thumbTip.y > pinkyTip.y;
-                    
-                    // To prevent false positives with open hand pointing down, check if fingers are curled
-                    // If extended count is low (e.g., < 3), implies fist-like shape
-                    if (isThumbBelowWrist && isThumbLowest && extendedCount < 3) {
-                        isRecharging = true;
+                        // 3. Steering: Gestures
+                        // Gesture "Two" (Peace Sign) -> Turn Left
+                        // Index and Middle Open, Ring and Pinky Closed
+                        if (isIndexOpen && isMiddleOpen && !isRingOpen && !isPinkyOpen) {
+                            steerDir = 'LEFT';
+                        }
+                        // Gesture "One" (Point) -> Turn Right
+                        // Index Open, Middle, Ring, Pinky Closed
+                        else if (isIndexOpen && !isMiddleOpen && !isRingOpen && !isPinkyOpen) {
+                            steerDir = 'RIGHT';
+                        }
                     }
                 }
             }
             
-            // Prioritize Swimming if both detect (unlikely with logic, but safe fallback)
+            // Prioritize Swimming over Recharging if conflict (e.g. using two hands)
             if (isSwimming) isRecharging = false;
 
             // Debounce/State update
             if (isSwimming) setActiveAction('SWIM');
             else if (isRecharging) setActiveAction('RECHARGE');
+            else if (steerDir === 'LEFT') setActiveAction('LEFT');
+            else if (steerDir === 'RIGHT') setActiveAction('RIGHT');
             else setActiveAction(null);
 
             onSwimChange(isSwimming);
             onRechargeChange(isRecharging);
+            onSteerChange(steerDir);
         }
 
         requestRef.current = requestAnimationFrame(predictWebcam);
     };
 
     return (
-        <div className="absolute top-20 right-4 w-32 bg-black/60 backdrop-blur-md rounded-lg border border-cyan-500/30 overflow-hidden shadow-lg pointer-events-auto transition-all duration-300">
+        <div className="absolute top-20 right-4 w-40 bg-black/60 backdrop-blur-md rounded-lg border border-cyan-500/30 overflow-hidden shadow-lg pointer-events-auto transition-all duration-300 z-40">
              {/* Header */}
              <div className="bg-slate-900 px-2 py-1 flex items-center justify-between">
                 <span className="text-[8px] font-mono text-cyan-400">MOTION LINK</span>
@@ -188,6 +239,18 @@ export const GestureController: React.FC<GestureControllerProps> = ({ onSwimChan
                     </div>
                 )}
                 
+                {isLoaded && activeAction === 'LEFT' && (
+                    <div className="absolute inset-y-0 left-0 w-1/2 flex items-center justify-center bg-white/10">
+                        <ArrowLeft size={24} className="text-white animate-pulse" />
+                    </div>
+                )}
+
+                {isLoaded && activeAction === 'RIGHT' && (
+                    <div className="absolute inset-y-0 right-0 w-1/2 flex items-center justify-center bg-white/10">
+                        <ArrowRight size={24} className="text-white animate-pulse" />
+                    </div>
+                )}
+                
                 {!isLoaded && (
                     <div className="absolute inset-0 flex items-center justify-center text-[8px] text-center text-cyan-500/50 p-2 font-mono">
                         {status}
@@ -198,10 +261,18 @@ export const GestureController: React.FC<GestureControllerProps> = ({ onSwimChan
              {/* Instruction */}
              <div className="px-2 py-1 bg-slate-900/80 border-t border-cyan-500/10 flex flex-col gap-0.5">
                  <div className="flex items-center justify-between">
-                    <span className="text-[6px] text-cyan-400">HAND OPEN</span>
+                    <span className="text-[6px] text-cyan-400">OPEN HAND</span>
                     <span className="text-[6px] text-white">SWIM</span>
                  </div>
+                 <div className="flex items-center justify-between border-t border-white/5 pt-0.5 mt-0.5">
+                    <span className="text-[6px] text-yellow-400">ONE FINGER</span>
+                    <span className="text-[6px] text-white">RIGHT</span>
+                 </div>
                  <div className="flex items-center justify-between">
+                    <span className="text-[6px] text-yellow-400">TWO FINGERS</span>
+                    <span className="text-[6px] text-white">LEFT</span>
+                 </div>
+                 <div className="flex items-center justify-between border-t border-white/5 pt-0.5 mt-0.5">
                     <span className="text-[6px] text-green-400">THUMB DOWN</span>
                     <span className="text-[6px] text-white">REFILL O2</span>
                  </div>

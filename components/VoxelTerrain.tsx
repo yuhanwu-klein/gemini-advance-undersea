@@ -1,129 +1,153 @@
-import React, { useRef, useLayoutEffect } from 'react';
+import React, { useRef, useLayoutEffect, useMemo } from 'react';
 import * as THREE from 'three';
 import { TerrainData } from '../types';
 
 // Must match the generator
-const BLOCK_SIZE = 0.2;
+const BLOCK_SIZE = 0.15;
 
 interface VoxelTerrainProps {
   terrainData: TerrainData;
 }
 
+// A helper component to render a "Lego" layer
+// It renders the base blocks AND the studs on top as separate instanced meshes for performance
+const LegoLayer = ({ 
+    instances, 
+    color, 
+    opacity = 1.0, 
+    transparent = false, 
+    emissive, 
+    emissiveIntensity,
+    customColors,
+    hasStuds = true
+}: { 
+    instances: any[], 
+    color?: string, 
+    opacity?: number, 
+    transparent?: boolean, 
+    emissive?: string, 
+    emissiveIntensity?: number,
+    customColors?: Float32Array,
+    hasStuds?: boolean
+}) => {
+    const meshRef = useRef<THREE.InstancedMesh>(null);
+    const studRef = useRef<THREE.InstancedMesh>(null);
+
+    useLayoutEffect(() => {
+        if (meshRef.current) {
+            instances.forEach((m, i) => meshRef.current!.setMatrixAt(i, m));
+            meshRef.current.instanceMatrix.needsUpdate = true;
+            
+            if (customColors && meshRef.current.instanceColor) {
+                const c = new THREE.Color();
+                for (let i = 0; i < instances.length; i++) {
+                    c.setRGB(customColors[i*3], customColors[i*3+1], customColors[i*3+2]);
+                    meshRef.current.setColorAt(i, c);
+                }
+                meshRef.current.instanceColor.needsUpdate = true;
+            }
+        }
+        
+        if (hasStuds && studRef.current) {
+            instances.forEach((m, i) => studRef.current!.setMatrixAt(i, m));
+            studRef.current.instanceMatrix.needsUpdate = true;
+
+            if (customColors && studRef.current.instanceColor) {
+                const c = new THREE.Color();
+                for (let i = 0; i < instances.length; i++) {
+                    c.setRGB(customColors[i*3], customColors[i*3+1], customColors[i*3+2]);
+                    studRef.current.setColorAt(i, c);
+                }
+                studRef.current.instanceColor.needsUpdate = true;
+            }
+        }
+    }, [instances, customColors, hasStuds]);
+
+    const plasticMaterial = useMemo(() => new THREE.MeshStandardMaterial({
+        color: color || '#ffffff',
+        roughness: 0.2, // Very glossy
+        metalness: 0.0, // Plastic, not metal
+        transparent: transparent,
+        opacity: opacity,
+        emissive: emissive || '#000000',
+        emissiveIntensity: emissiveIntensity || 0,
+        envMapIntensity: 1.0
+    }), [color, opacity, transparent, emissive, emissiveIntensity]);
+
+    // Box Geometry slightly bevelled via scaling? No, hard edges for Lego look
+    const boxGeo = useMemo(() => new THREE.BoxGeometry(BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE), []);
+    
+    // Stud Geometry
+    const studDiameter = BLOCK_SIZE * 0.6;
+    const studHeight = BLOCK_SIZE * 0.2;
+    const studGeo = useMemo(() => {
+        const geo = new THREE.CylinderGeometry(studDiameter/2, studDiameter/2, studHeight, 8);
+        geo.translate(0, (BLOCK_SIZE/2) + (studHeight/2), 0); // Move to top of block
+        return geo;
+    }, [studDiameter, studHeight]);
+
+    return (
+        <group>
+            <instancedMesh ref={meshRef} args={[boxGeo, plasticMaterial, instances.length]} castShadow receiveShadow>
+                {customColors && <instancedBufferAttribute attach="instanceColor" args={[customColors, 3]} />}
+            </instancedMesh>
+            
+            {hasStuds && (
+                <instancedMesh ref={studRef} args={[studGeo, plasticMaterial, instances.length]} receiveShadow>
+                     {customColors && <instancedBufferAttribute attach="instanceColor" args={[customColors, 3]} />}
+                </instancedMesh>
+            )}
+        </group>
+    );
+};
+
 export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ terrainData }) => {
-  const sandRef = useRef<THREE.InstancedMesh>(null);
-  const stoneRef = useRef<THREE.InstancedMesh>(null);
-  const runeRef = useRef<THREE.InstancedMesh>(null);
-  const lampRef = useRef<THREE.InstancedMesh>(null);
-  const kelpRef = useRef<THREE.InstancedMesh>(null);
-  const grassRef = useRef<THREE.InstancedMesh>(null);
-  const coralRef = useRef<THREE.InstancedMesh>(null);
-  const starfishRef = useRef<THREE.InstancedMesh>(null);
-  const flowerRef = useRef<THREE.InstancedMesh>(null);
-  const columnRef = useRef<THREE.InstancedMesh>(null);
-
-  useLayoutEffect(() => {
-    const apply = (ref: React.RefObject<THREE.InstancedMesh>, data: any[]) => {
-        if (ref.current) {
-            data.forEach((m, i) => ref.current!.setMatrixAt(i, m));
-            ref.current.instanceMatrix.needsUpdate = true;
-        }
-    };
-
-    apply(sandRef, terrainData.sandInstances);
-    apply(stoneRef, terrainData.stoneInstances);
-    apply(runeRef, terrainData.runeInstances);
-    apply(lampRef, terrainData.lampInstances);
-    apply(kelpRef, terrainData.kelpInstances);
-    apply(grassRef, terrainData.grassInstances);
-    apply(coralRef, terrainData.coralInstances);
-    apply(starfishRef, terrainData.starfishInstances);
-    apply(flowerRef, terrainData.flowerInstances);
-    apply(columnRef, terrainData.columnInstances);
-
-    if (coralRef.current) {
-        const c = new THREE.Color();
-        const colors = terrainData.coralColors;
-        for (let i = 0; i < terrainData.coralInstances.length; i++) {
-            c.setRGB(colors[i*3], colors[i*3+1], colors[i*3+2]);
-            coralRef.current.setColorAt(i, c);
-        }
-        if (coralRef.current.instanceColor) coralRef.current.instanceColor.needsUpdate = true;
-    }
-
-  }, [terrainData]);
-
-  const geoArgs: [number, number, number] = [BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE];
-
-  // Material settings for "Lego" plastic look
-  const plasticProps = { roughness: 0.4, metalness: 0.1 };
-
   return (
     <group>
-      {/* Sand Floor - Creamy/Soft */}
-      <instancedMesh ref={sandRef} args={[undefined, undefined, terrainData.sandInstances.length]} receiveShadow>
-        <boxGeometry args={geoArgs} />
-        <meshStandardMaterial color="#fffbeb" {...plasticProps} />
-      </instancedMesh>
+      {/* Sand Floor - Light Cyan/White for Blue Tone */}
+      <LegoLayer instances={terrainData.sandInstances} color="#ecfeff" />
 
-      {/* Stone Ruins - Magical Slate */}
-      <instancedMesh ref={stoneRef} args={[undefined, undefined, terrainData.stoneInstances.length]} castShadow receiveShadow>
-        <boxGeometry args={geoArgs} />
-        <meshStandardMaterial color="#64748b" {...plasticProps} />
-      </instancedMesh>
+      {/* Stone Ruins - Cool Slate */}
+      <LegoLayer instances={terrainData.stoneInstances} color="#64748b" />
 
-      {/* Stone Pillars - Slightly lighter slate */}
-      <instancedMesh ref={columnRef} args={[undefined, undefined, terrainData.columnInstances.length]} castShadow receiveShadow>
-        <boxGeometry args={[BLOCK_SIZE * 0.8, BLOCK_SIZE, BLOCK_SIZE * 0.8]} />
-        <meshStandardMaterial color="#94a3b8" {...plasticProps} />
-      </instancedMesh>
-
-      {/* GLOWING RUNES - Cyan/Magic */}
-      <instancedMesh ref={runeRef} args={[undefined, undefined, terrainData.runeInstances.length]}>
-        <boxGeometry args={geoArgs} />
-        <meshStandardMaterial 
-            color="#22d3ee" 
-            emissive="#22d3ee" 
-            emissiveIntensity={2} 
-            toneMapped={false} 
-            {...plasticProps} 
-        />
-      </instancedMesh>
+      {/* Stone Pillars */}
+      <LegoLayer instances={terrainData.columnInstances} color="#94a3b8" />
       
-      {/* Kelp (Tall) - Pastel Teal */}
-      <instancedMesh ref={kelpRef} args={[undefined, undefined, terrainData.kelpInstances.length]} castShadow receiveShadow>
-        <boxGeometry args={[BLOCK_SIZE * 0.8, BLOCK_SIZE, BLOCK_SIZE * 0.8]} />
-        <meshStandardMaterial color="#2dd4bf" {...plasticProps} />
-      </instancedMesh>
+      {/* Small Rocks */}
+      <LegoLayer instances={terrainData.smallRockInstances} color="#475569" hasStuds={false} />
 
-      {/* Seagrass (Short) - Pastel Mint */}
-      <instancedMesh ref={grassRef} args={[undefined, undefined, terrainData.grassInstances.length]} receiveShadow>
-        <boxGeometry args={[BLOCK_SIZE * 0.6, BLOCK_SIZE * 0.8, BLOCK_SIZE * 0.6]} />
-        <meshStandardMaterial color="#6ee7b7" transparent opacity={0.9} {...plasticProps} />
-      </instancedMesh>
+      {/* GLOWING RUNES */}
+      <LegoLayer 
+        instances={terrainData.runeInstances} 
+        color="#22d3ee" 
+        emissive="#22d3ee" 
+        emissiveIntensity={2} 
+        hasStuds={false} // Runes are smooth
+      />
+      
+      {/* Kelp (Tall) */}
+      <LegoLayer instances={terrainData.kelpInstances} color="#2dd4bf" />
 
-      {/* Starfish - Pastel Pink */}
-      <instancedMesh ref={starfishRef} args={[undefined, undefined, terrainData.starfishInstances.length]} receiveShadow>
-        <boxGeometry args={[BLOCK_SIZE * 0.8, BLOCK_SIZE * 0.2, BLOCK_SIZE * 0.8]} />
-        <meshStandardMaterial color="#fca5a5" {...plasticProps} />
-      </instancedMesh>
+      {/* Seagrass (Short) */}
+      <LegoLayer instances={terrainData.grassInstances} color="#6ee7b7" opacity={0.9} transparent />
 
-      {/* Sea Flowers - Lavender */}
-      <instancedMesh ref={flowerRef} args={[undefined, undefined, terrainData.flowerInstances.length]}>
-        <boxGeometry args={[BLOCK_SIZE * 0.4, BLOCK_SIZE * 0.6, BLOCK_SIZE * 0.4]} />
-        <meshStandardMaterial color="#e879f9" emissive="#e879f9" emissiveIntensity={0.2} {...plasticProps} />
-      </instancedMesh>
+      {/* Starfish - Flat */}
+      <LegoLayer instances={terrainData.starfishInstances} color="#fca5a5" hasStuds={true} />
+
+      {/* Anemones */}
+      <LegoLayer instances={terrainData.anemoneInstances} color="#fb7185" emissive="#fb7185" emissiveIntensity={0.2} />
+
+      {/* Sea Flowers */}
+      <LegoLayer instances={terrainData.flowerInstances} color="#e879f9" emissive="#e879f9" emissiveIntensity={0.2} />
 
       {/* Coral (Multi-colored) */}
-      <instancedMesh ref={coralRef} args={[undefined, undefined, terrainData.coralInstances.length]} castShadow receiveShadow>
-        <boxGeometry args={[BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE]} />
-        <meshStandardMaterial {...plasticProps} />
-      </instancedMesh>
+      <LegoLayer 
+        instances={terrainData.coralInstances} 
+        customColors={terrainData.coralColors}
+      />
 
       {/* Sea Lanterns - Warm Gold */}
-       <instancedMesh ref={lampRef} args={[undefined, undefined, terrainData.lampInstances.length]}>
-        <boxGeometry args={[BLOCK_SIZE * 0.8, BLOCK_SIZE * 0.8, BLOCK_SIZE * 0.8]} />
-        <meshBasicMaterial color="#fcd34d" />
-      </instancedMesh>
+      <LegoLayer instances={terrainData.lampInstances} color="#fcd34d" emissive="#fcd34d" emissiveIntensity={0.5} />
     </group>
   );
 };
